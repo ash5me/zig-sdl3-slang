@@ -51,10 +51,13 @@ pub const Session = struct {
     ctx: Context = undefined,
 
     /// Opens everything, in dependency order: settings are read, then the platform starts, then the
-    /// window, the GPU device, and the audio device. Panics on failures that leave the game unable
-    /// to run. Missing audio does not panic; the game runs silent.
+    /// window, the GPU device, and the audio device. A failed step returns its error after releasing
+    /// whatever was opened before it, so a failed start leaves the session stopped. The config is
+    /// checked before anything is opened. GPU resources made once the device is up panic instead,
+    /// because the engine cannot continue without them. Missing audio does not fail startup; the
+    /// game runs silent.
     pub fn start(self: *Session, config: Config, allocators: *allocator_types.RuntimeAllocators) !void {
-        std.debug.assert(self.stopped);
+        logging.assert(self.stopped, @src(), "a session is already running", .{});
         config.validate() catch |err| {
             elog.err("{s}", .{Config.validationMessage(err)});
             return err;

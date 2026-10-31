@@ -87,7 +87,10 @@ pub const Bindings = struct {
         for (std.enums.values(Action)) |action| {
             const index = @intFromEnum(action);
             const keys = defaultKeys(action);
-            std.debug.assert(keys.len <= engine.settings.max_keys_per_action);
+            // A capacity limit, so it must hold in every build mode: the copy below would overflow.
+            if (keys.len > engine.settings.max_keys_per_action) {
+                engine.log.fail(@src(), "action {s} has {d} default keys, above the limit of {d}", .{ @tagName(action), keys.len, engine.settings.max_keys_per_action });
+            }
             @memcpy(bindings.keys[index][0..keys.len], keys);
             bindings.counts[index] = keys.len;
         }

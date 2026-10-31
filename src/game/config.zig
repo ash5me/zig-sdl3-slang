@@ -3,7 +3,7 @@
 
 const engine = @import("bairava");
 
-/// Window title. The engine appends play stats to it.
+/// Window title. The window keeps it as written; frame stats are in the debug overlay (F3).
 pub const title: [:0]const u8 = "Semkootru";
 /// Window size in pixels at startup. The settings file can change it with `resolution`.
 pub const window_w: c_int = 960;

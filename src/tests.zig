@@ -40,6 +40,7 @@ test {
     _ = @import("engine/platform/sdl/window.zig");
     _ = @import("engine/physics/shapes.zig");
     _ = @import("engine/assets/manager.zig");
+    _ = @import("engine/scene/scene_manager.zig");
 }
 
 /// A texture for the sprite tests. Sprites read only its size, so the GPU handles stay undefined and

@@ -4,9 +4,11 @@
 //! Engine code never names a game type. A game plugs in by passing a type with `init`, `update`,
 //! `draw`, and `deinit` to `run`. `init` runs once; then `update` and `draw` repeat until shutdown;
 //! after successful initialization, `deinit` runs once. The game owns resources it loads and must
-//! release them in `deinit` before the engine tears down the GPU and platform. Game `init` may
-//! return a recoverable error; the runtime logs it and unwinds the session without entering the
-//! frame loop. Truly fatal programmer errors and broken invariants still panic.
+//! release them in `deinit` before the engine tears down the GPU and platform. If `init` fails,
+//! `deinit` does not run, so `init` must release what it opened before the failing step. Game `init`
+//! may return a recoverable error: `run` logs it, releases what the engine opened, and returns the
+//! error to its caller, so a failed start never looks like a clean exit. Truly fatal programmer
+//! errors and broken invariants still panic.
 //!
 //! Timing: `update` runs at a fixed rate, so game logic doesn't depend on the display. `draw`
 //! runs once per frame and gets `alpha` to blend between the last two updates.

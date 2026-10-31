@@ -15,8 +15,8 @@ fn panicWithLog(msg: []const u8, first_trace_addr: ?usize) noreturn {
     std.debug.defaultPanic(msg, first_trace_addr);
 }
 
-pub fn main() void {
-    engine.run(Game, .{
+pub fn main() !void {
+    try engine.run(Game, .{
         .title = config.title,
         .window_w = config.window_w,
         .window_h = config.window_h,

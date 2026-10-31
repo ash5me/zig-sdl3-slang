@@ -37,10 +37,14 @@ const idle_sleep_ms: u32 = 16;
 const black = renderer.Color{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
 
 /// Opens the window and runs `Game` until it sets `running` to false or the window closes.
-pub fn run(comptime Game: type, config: Config) void {
+///
+/// Returns an error when the config is invalid, when the engine can't start, or when the game's
+/// `init` fails. Each failure is logged, and everything opened before it is released first. A
+/// clean run returns normally.
+pub fn run(comptime Game: type, config: Config) !void {
     config.validate() catch |err| {
         elog.err("{s}", .{Config.validationMessage(err)});
-        return;
+        return err;
     };
 
     // The logger reads the platform clock, so it is set before the first log line. Its timestamps
@@ -60,14 +64,14 @@ pub fn run(comptime Game: type, config: Config) void {
     var session = lifecycle.Session{};
     session.start(config, &allocators) catch |err| {
         elog.err("engine startup failed: {s}", .{@errorName(err)});
-        return;
+        return err;
     };
     defer session.stop();
     const ctx = &session.ctx;
 
     var game = Game.init(ctx) catch |err| {
         elog.err("game initialization failed: {s}", .{@errorName(err)});
-        return;
+        return err;
     };
     defer game.deinit();
     // The overlay bakes its own copy of the debug font, loaded from the same files as the game's fonts.
