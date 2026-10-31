@@ -30,7 +30,8 @@ test {
     _ = @import("engine/core/allocators.zig");
     _ = @import("engine/renderer/view.zig");
     _ = @import("engine/core/settings.zig");
-    _ = @import("engine/renderer/shader.zig");
+    _ = @import("engine/renderer/backends/sdl_gpu/shader.zig");
+    _ = @import("engine/renderer/backends/sdl_gpu/pass.zig");
     _ = @import("engine/input/input.zig");
     _ = @import("engine/platform/sdl/input.zig");
     _ = @import("engine/platform/sdl/audio.zig");

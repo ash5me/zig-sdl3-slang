@@ -449,7 +449,7 @@ pub fn build(b: *std.Build) void {
     // Tests open no window and create no GPU device.
     test_module.linkLibrary(sdl.artifact("SDL3"));
     test_module.addAnonymousImport("embedded_shaders", .{ .root_source_file = embedded_module });
-    // texture.zig reaches the logger, so the test binary builds the log C code too. Zones compile to
+    // tests.zig imports the logger, so the test binary builds the log C code too. Zones compile to
     // nothing without -Dtracy, so the tests need only ztracy's Zig module, not the Tracy library.
     test_module.addIncludePath(b.path("vendor"));
     test_module.addIncludePath(b.path("src/engine/logging"));

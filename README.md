@@ -223,10 +223,16 @@ With `fullscreen = true` the window uses the monitor's own mode, so `resolution`
 │   │   │       ├── input.zig  SDL events and keyboard state into platform events
 │   │   │       └── audio.zig  Playback device, WAV decoding, conversion, and SDL streams
 │   │   ├── renderer/          Drawing
-│   │   │   ├── renderer.zig   Render passes and color targets
-│   │   │   ├── sprite.zig     Batched textured quads, sprite pipeline, vertex upload
-│   │   │   ├── texture.zig    2D textures, render targets, format mapping and support checks
-│   │   │   ├── shader.zig     Picks a shader format and creates GPU shaders from embedded code
+│   │   │   ├── renderer.zig   Render passes and color targets, on engine-owned types
+│   │   │   ├── render_types.zig  Color, vertex layout, and index values shared with the backend
+│   │   │   ├── sprite.zig     Batched textured quads: z order and batching on the CPU, then the backend draws
+│   │   │   ├── texture.zig    2D textures and render targets, as engine values over the backend's state
+│   │   │   ├── backends/sdl_gpu/  The only renderer code that names SDL_GPU types
+│   │   │   │   ├── backend.zig  Root: SDL GPU type aliases and the backend modules
+│   │   │   │   ├── shader.zig   Picks a shader format and creates GPU shaders from embedded code
+│   │   │   │   ├── pass.zig     Begins and ends render passes, with the clear color
+│   │   │   │   ├── texture.zig  GPU textures, samplers, upload fences, and format mapping
+│   │   │   │   └── sprite.zig   Sprite pipeline, vertex and index buffers, upload, and draw calls
 │   │   │   ├── camera.zig     View position, follow target, smoothing, edge clamping, zoom easing
 │   │   │   ├── view.zig       Fits the view to the window for each zoom and scale mode, and maps mouse positions
 │   │   │   ├── loaded_atlas.zig  The atlas on the GPU: its texture, its index, and each sprite's region
@@ -394,7 +400,7 @@ The loop is in `core/runtime.zig`. Game logic runs at a fixed rate, and drawing 
 - GPU device creation with a Vulkan 1.2 request, SPIR-V shaders (plus DXIL when built with `-Ddxil=true`), and an optional validation layer (`-Dgpu-debug`).
 - Swapchain claim, command buffer acquire and submit, and clear-color render passes.
 - A build step that compiles two Slang entry points to SPIR-V, and to DXIL when `-Ddxil=true` is set, and embeds them in the executable.
-- Shader loading that picks the first format the device accepts (SPIR-V first, then DXIL). Shader code is embedded in the executable at build time, aligned for 32-bit word reads, and each shader's entry point and resource counts are declared as a `shader.Source` beside the pipeline in `renderer/sprite.zig`.
+- Shader loading that picks the first format the device accepts (SPIR-V first, then DXIL). Shader code is embedded in the executable at build time, aligned for 32-bit word reads, and each shader's entry point and resource counts are declared as a `shader.Source` beside the pipeline in `renderer/backends/sdl_gpu/sprite.zig`.
 - One sprite shader: the texture sample multiplied by the vertex color.
 
 **Textures and images**
@@ -453,7 +459,7 @@ These estimates are rough. They measure how close each area is to something usab
 | Profiling | `profiling/profile.zig`, `engine/core/engine.zig` | Functional | 60% | Tracy zones for the frame, events, updates, passes, uploads, submit, and asset loads, plus frame marks. Compiled in only with `-Dtracy=true`. A captured session checked the zone names and counts. Missing: GPU timing zones, allocation tracking, and plots. |
 | Gameplay | `game/` | Prototype | 20% | Player with directional walk clips, one level loaded from `assets/maps/level1.txt` and drawn in layers, and movement and quit actions bound in `game/controls.zig`. No entities or rules. |
 | Renderer | `renderer/renderer.zig` | Solid base | 75% | Device, swapchain, and passes work. Asks the device for DXIL and MSL only when the build embeds those formats. Pass settings are unit tested. Device and frame calls need a GPU and aren't. Missing: device-lost recovery, pass helpers. |
-| Shaders | `renderer/shader.zig` | Basic | 65% | Picks the first shader format the device accepts (SPIR-V, DXIL, then MSL) and creates GPU shaders from code embedded at build time. DXIL (`-Ddxil=true`) and MSL (`-Dmetal=true`) are optional. Per-shader entry points and resource counts are declared in `renderer/sprite.zig`. Missing: reflection. Uniform buffer count is supported but unused. |
+| Shaders | `renderer/backends/sdl_gpu/shader.zig` | Basic | 65% | Picks the first shader format the device accepts (SPIR-V, DXIL, then MSL) and creates GPU shaders from code embedded at build time. DXIL (`-Ddxil=true`) and MSL (`-Dmetal=true`) are optional. Per-shader entry points and resource counts are declared in `renderer/backends/sdl_gpu/sprite.zig`. Missing: reflection. Uniform buffer count is supported but unused. |
 | Textures | `renderer/texture.zig` | Solid base | 70% | Uploads queue without waiting, and `isReady` reports when one finishes. Missing: unload and reload. |
 | Atlas | `assets/loaders/atlas.zig`, `tools/atlas/pack.c` | Functional | 60% | Build-time packing with stb_rect_pack, index parsing with validation, and lookup by name. Missing: runtime packing, several atlas pages, rotated sprites. |
 | Images | `assets/loaders/image.zig` | Basic | 60% | PNG and other formats through stb_image to RGBA8. Synchronous, relative paths only. |
@@ -495,7 +501,7 @@ These are the natural extension points. Each one reuses existing code.
 
 **Add input actions.** Add a name to `Action` in `game/controls.zig`, give it default keys in `defaultKeys`, and query it with `self.bindings.held`, `self.bindings.pressed`, or `self.bindings.released`. The settings file can then bind it with a `bind` line. Gameplay never checks a key directly. To use a key the engine doesn't know yet, add it to `Key` in `engine/input/input.zig` and map it to its SDL scancode. A new key name works in `bind` lines as soon as it is in `Key`.
 
-**Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `renderer/sprite.zig` with the stage, resource counts, and embedded code for each format. DXIL and MSL slices are empty unless enabled with `-Ddxil=true` or `-Dmetal=true`. Follow the target-specific resource declarations in `default.slang`; Slang emits Metal texture and sampler arguments for MSL. Load it with `shader.load` and create a pipeline the way `SpriteBatch.init` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
+**Add a shader or pipeline.** Add the entry point to `shaders/default.slang`, because `build.zig` compiles only that file (to compile another file, give `ShaderEntry` a source path). Add a row for each entry point to `shader_entries` in `build.zig`, and declare a `shader.Source` in `renderer/backends/sdl_gpu/sprite.zig` with the stage, resource counts, and embedded code for each format. DXIL and MSL slices are empty unless enabled with `-Ddxil=true` or `-Dmetal=true`. Follow the target-specific resource declarations in `default.slang`; Slang emits Metal texture and sampler arguments for MSL. Load it with `shader.load` and create a pipeline the way `backends/sdl_gpu/sprite.zig`'s `create` does. Pipelines are built for a specific shader pair and color format, so a second one needs its own init.
 
 **Add a render target.** `Texture.initTarget` creates a target in the swapchain format. Pass it to `Renderer.beginPass` to draw into it, then sample it like any other texture. Use this for lighting, post-processing, or a minimap.
 
@@ -513,7 +519,7 @@ These are the natural extension points. Each one reuses existing code.
 
 3. **Fixed: a minimized window spun the CPU.** A zero-size window, or a frame with no swapchain, used to restart the loop without waiting. Both cases now sleep for 16 ms first, so a minimized window idles.
 
-4. **Vulkan is the default backend. Direct3D 12 and Metal formats are opt-in.** SPIR-V shaders are always built. `zig build -Ddxil=true` embeds DXIL (`sm_6_0`), and `zig build -Dmetal=true` embeds MSL; the renderer tells SDL which optional formats are available. `shader.pickFormat` selects the first supported format. SDL consumes Slang's MSL source with the original entry-point names. The `default.slang` sampler declarations cover Vulkan and D3D12; Slang maps the texture and sampler to Metal arguments for MSL. Vertex locations match the attributes in `renderer/sprite.zig`.
+4. **Vulkan is the default backend. Direct3D 12 and Metal formats are opt-in.** SPIR-V shaders are always built. `zig build -Ddxil=true` embeds DXIL (`sm_6_0`), and `zig build -Dmetal=true` embeds MSL; the renderer tells SDL which optional formats are available. `shader.pickFormat` selects the first supported format. SDL consumes Slang's MSL source with the original entry-point names. The `default.slang` sampler declarations cover Vulkan and D3D12; Slang maps the texture and sampler to Metal arguments for MSL. Vertex locations match the attributes in `renderer/backends/sdl_gpu/sprite.zig`.
 
 5. **Fixed: names didn't match.** The package is `Bairava` in `build.zig.zon`, the executable and window are `Semkootru`, and the sprite shader is `default.slang`.
 
@@ -604,7 +610,7 @@ The engine is currently a 2D project, so prioritize textures, audio, and fonts r
 - Game `update` runs at the fixed rate `update_hz` in `game/config.zig`, and `ctx.dt` is that step. `draw` runs once per frame and gets `alpha`, which blends between the last two updates.
 - Asset paths are relative to the executable's folder. The build installs `assets/` to `zig-out/bin/assets/`, along with the packed `atlas.png` and `atlas.txt`, so a path such as `assets/atlas.png` works from any directory.
 - `assets/warrior.png` is the original source art; the build packs the prepared 80×128 `assets/warrior_16x32.png` sheet into the atlas instead.
-- SDL's C header is imported once in `platform/sdl/sdl.zig`. SDL imports and names are allowed in `platform/sdl/`, the forwarding contract, `src/tests.zig` backend-test imports, and `renderer/renderer.zig`, `renderer/shader.zig`, `renderer/sprite.zig`, and `renderer/texture.zig`; Linux CI enforces this file-specific list with `scripts/boundary_scan.py --fail`. Core code uses the platform facade and renderer-owned values, not SDL declarations. Unrelated C integrations such as cglm, Parson, stb_image, and the UI bridge are outside this SDL boundary. Only `core/math.zig` imports cglm's headers, and only `profiling/profile.zig` imports ztracy.
+- SDL's C header is imported once in `platform/sdl/sdl.zig`. SDL imports and names are allowed in `platform/sdl/`, the forwarding contract, `src/tests.zig` backend-test imports, and the SDL GPU backend in `renderer/backends/sdl_gpu/`; Linux CI enforces this list with `scripts/boundary_scan.py --fail`. Core code uses the platform facade and renderer-owned values, not SDL declarations. Unrelated C integrations such as cglm, Parson, stb_image, and the UI bridge are outside this SDL boundary. Only `core/math.zig` imports cglm's headers, and only `profiling/profile.zig` imports ztracy.
 - The C code for text and widgets lives in `src/engine/ui/` and never touches SDL or the GPU. `text.c` uses stb_truetype for TrueType and FreeType for CFF-capable font rasterization; `vendor/stb_truetype_impl.c` provides stb_truetype's implementation. `ui/ui.zig` is the one bridge from that code to the sprite batch.
 - `core/math.zig`, `memory/string.zig`, `memory/hash_map.zig`, `assets/registry.zig`, `assets/cache.zig`, `assets/loaders/atlas.zig`, `memory/vector.zig`, `ecs/entity.zig`, `renderer/view.zig`, `scene/tilemap.zig`, `scene/scene_manager.zig`, `physics/collision.zig`, `physics/queries.zig`, `renderer/camera.zig`, `animation/animation.zig`, and `audio/voices.zig` are device-independent and have unit tests. Keep new pure code the same way when you can. Platform backend and renderer GPU tests may use SDL declarations but do not open a window or create a GPU device.
 - Asset names and paths are validated once, when they're registered, and nothing downstream checks them again.
