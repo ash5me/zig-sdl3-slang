@@ -2,11 +2,26 @@
 //! choose (AoS or SoA). Callers refer to entities through handles, not row numbers, because a despawn
 //! moves the last row into the gap, which changes that row's index.
 //!
-//! The rows are dense: the first `count()` rows are all alive, with nothing between them. Systems loop
-//! over `0..count()` and read whole fields with `world.rows.column(name)`, which works under either
-//! layout. A handle is a slot index plus a generation. Each slot records which row it owns. Despawning
-//! bumps the slot's generation, so a stale handle is rejected instead of reaching whatever entity
-//! reuses the slot.
+//! Storage: the rows are dense. The first `count()` rows are all alive, with nothing between them. A
+//! system reads whole fields with `world.rows.column(name)`, which works under either layout. Once an
+//! entity despawns, rows are no longer in spawn order.
+//!
+//! Handles: a handle is a slot index plus a generation. Each slot records which row it owns, and
+//! `handleAt(row)` goes the other way, from a row to its handle. Despawning bumps the slot's generation,
+//! so a stale handle is rejected instead of reaching whatever entity reuses the slot.
+//!
+//! Structural changes. A system must follow these rules:
+//! - `spawn` may grow the storage, which moves it. A column view or pointer taken before a spawn is
+//!   invalid after it, so take views again after spawning.
+//! - A loop over `0..count()` evaluates the count once, so entities spawned inside it are not visited
+//!   by that loop.
+//! - `despawn` moves the last row into the freed row. To despawn while walking the rows, walk from the
+//!   last row to the first. Each despawn then moves only a row the walk has already visited, so no
+//!   entity is skipped or visited twice.
+//!
+//! Systems are plain functions, and the caller runs them in the order it chooses. There is no scheduler
+//! and no deferred command buffer. The world is optional: simple game objects can stay ordinary structs.
+//! The component types belong to the game, and this module knows nothing about them.
 //!
 //! This module imports no SDL or logger, so `zig build test` runs its tests.
 
@@ -143,6 +158,13 @@ pub fn World(comptime Row: type, comptime layout: Layout) type {
             return true;
         }
 
+        /// The handle of the entity that owns row `row_index`. A system that finds an entity by its row
+        /// uses this to get a handle it can despawn or set. `row_index` must be below `count()`.
+        pub fn handleAt(self: *const Self, row_index: usize) Handle {
+            const slot_index = self.owners.get(row_index).slot;
+            return .{ .index = slot_index, .generation = self.slots.get(slot_index).generation };
+        }
+
         /// Takes a free slot from the free list, or appends a new one. Callers must reserve room first.
         fn claimSlot(self: *Self) u32 {
             if (self.free_head != none) {
@@ -255,5 +277,86 @@ test "a system that reads columns updates each entity under both layouts" {
         advance(&world, 0.5);
         try expectBody(body(1, 1, 2), world.get(first).?);
         try expectBody(body(2, 4.5, -1), world.get(second).?);
+    }
+}
+
+test "handleAt names the entity that owns each row, and the handle still works after rows move" {
+    inline for (.{ Layout.aos, Layout.soa }) |layout| {
+        var world = World(Body, layout).init(std.testing.allocator);
+        defer world.deinit();
+
+        const first = try world.spawn(body(1, 0, 0));
+        _ = try world.spawn(body(2, 0, 0));
+        _ = try world.spawn(body(3, 0, 0));
+        // Despawning the first row moves the last row (id 3) into its place.
+        try std.testing.expect(world.despawn(first));
+
+        var row: usize = 0;
+        while (row < world.count()) : (row += 1) {
+            const handle = world.handleAt(row);
+            try std.testing.expect(world.isAlive(handle));
+            try std.testing.expectEqual(world.rows.get(row).id, world.get(handle).?.id);
+        }
+    }
+}
+
+test "walking rows from last to first despawns every match without skipping any" {
+    inline for (.{ Layout.aos, Layout.soa }) |layout| {
+        var world = World(Body, layout).init(std.testing.allocator);
+        defer world.deinit();
+
+        var id: u64 = 0;
+        while (id < 10) : (id += 1) {
+            _ = try world.spawn(body(id, 0, 0));
+        }
+
+        var row = world.count();
+        while (row > 0) {
+            row -= 1;
+            const handle = world.handleAt(row);
+            if (world.get(handle).?.id % 2 == 1) _ = world.despawn(handle);
+        }
+
+        try std.testing.expectEqual(@as(usize, 5), world.count());
+        var sum: u64 = 0;
+        var k: usize = 0;
+        while (k < world.count()) : (k += 1) {
+            const survivor = world.rows.get(k);
+            try std.testing.expect(survivor.id % 2 == 0);
+            sum += survivor.id;
+        }
+        // Every even id survives exactly once: 0 + 2 + 4 + 6 + 8.
+        try std.testing.expectEqual(@as(u64, 20), sum);
+    }
+}
+
+test "a spawn that runs out of memory leaves the world and its handles intact" {
+    inline for (.{ Layout.aos, Layout.soa }) |layout| {
+        var buffer: [2048]u8 = undefined;
+        var fixed = std.heap.FixedBufferAllocator.init(&buffer);
+        var world = World(Body, layout).init(fixed.allocator());
+        defer world.deinit();
+
+        var handles: [256]Handle = undefined;
+        var spawned: usize = 0;
+        while (true) {
+            const handle = world.spawn(body(@intCast(spawned), @floatFromInt(spawned), 0)) catch |err| {
+                try std.testing.expect(err == error.OutOfMemory);
+                break;
+            };
+            handles[spawned] = handle;
+            spawned += 1;
+        }
+
+        // The failed spawn added no row, and every handle that did succeed still names its own data.
+        try std.testing.expect(spawned > 0);
+        try std.testing.expectEqual(spawned, world.count());
+        for (handles[0..spawned], 0..) |handle, n| {
+            try expectBody(body(@intCast(n), @floatFromInt(n), 0), world.get(handle).?);
+        }
+        for (handles[0..spawned]) |handle| {
+            try std.testing.expect(world.despawn(handle));
+        }
+        try std.testing.expectEqual(@as(usize, 0), world.count());
     }
 }

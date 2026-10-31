@@ -65,3 +65,11 @@ pub const ui = @import("../ui/ui.zig");
 pub const log = @import("../logging/log.zig");
 /// Profiling zones for the Tracy profiler. They record only when the build uses -Dtracy=true.
 pub const profile = @import("../profiling/profile.zig");
+/// Scenes: one active scene at a time, switched at a safe point. See scene/scene_manager.zig.
+pub const scene = @import("../scene/scene.zig");
+/// Runs a chain of scenes as a game. Pass `SceneHost(FirstScene)` to `run`.
+pub fn SceneHost(comptime Root: type) type {
+    return @import("../scene/host.zig").Host(Context, DrawContext, Root);
+}
+/// The handle a scene gets in `update`, for asking to change scene.
+pub const SceneNavigator = @import("../scene/scene_manager.zig").Manager(Context, DrawContext).Navigator;

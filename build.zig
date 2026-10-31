@@ -274,6 +274,27 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
+    // Sample game: a second executable that uses only the public Bairava API, so the scene system is
+    // shown without any Semkootru code. Its one texture is installed beside it.
+    const sample = b.addExecutable(.{
+        .name = "BairavaSample",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sample/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    sample.root_module.addImport("bairava", engine_module);
+    b.installArtifact(sample);
+
+    const install_sample_texture = b.addInstallFile(b.path("sample/assets/white.png"), "bin/assets/sample/white.png");
+    b.getInstallStep().dependOn(&install_sample_texture.step);
+
+    const run_sample = b.addRunArtifact(sample);
+    run_sample.step.dependOn(b.getInstallStep());
+    b.step("run-sample", "Build and run the scene sample").dependOn(&run_sample.step);
+
     // Texture atlas: every sprite in one image, packed at build time by tools/atlas/pack.c with
     // stb_rect_pack. The packer runs on the build machine, so it is built for the host, not the target.
     const atlas_tool = b.addExecutable(.{

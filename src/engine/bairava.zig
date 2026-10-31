@@ -33,3 +33,6 @@ pub const settings = engine.settings;
 pub const ui = engine.ui;
 pub const log = engine.log;
 pub const profile = engine.profile;
+pub const scene = engine.scene;
+pub const SceneHost = engine.SceneHost;
+pub const SceneNavigator = engine.SceneNavigator;

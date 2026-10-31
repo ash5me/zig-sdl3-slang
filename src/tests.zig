@@ -10,6 +10,7 @@ const camera = @import("engine/renderer/camera.zig");
 const sprite = @import("engine/renderer/sprite.zig");
 const Texture = @import("engine/renderer/texture.zig").Texture;
 const tilemap = @import("engine/scene/tilemap.zig");
+const physics_queries = @import("engine/physics/queries.zig");
 
 test {
     _ = @import("engine/renderer/renderer.zig");
@@ -39,8 +40,11 @@ test {
     _ = @import("engine/logging/log.zig");
     _ = @import("engine/platform/sdl/window.zig");
     _ = @import("engine/physics/shapes.zig");
+    _ = @import("engine/physics/collision.zig");
+    _ = @import("engine/physics/queries.zig");
     _ = @import("engine/assets/manager.zig");
     _ = @import("engine/scene/scene_manager.zig");
+    _ = @import("engine/scene/host.zig");
 }
 
 /// A texture for the sprite tests. Sprites read only its size, so the GPU handles stay undefined and
@@ -590,6 +594,56 @@ test "a box flush against a wall cannot step into it" {
     defer map.deinit(allocator);
     const moved = map.moveBox(.{ .x = 32, .y = 32, .w = 16, .h = 16 }, 0.5, 0);
     try std.testing.expectApproxEqAbs(@as(f32, 32), moved.x, 1e-4);
+}
+
+test "generic movement against solid-tile colliders matches the tile map's own movement" {
+    const allocator = std.testing.allocator;
+    const map = try tilemap.TileMap.parse(allocator, room_text);
+    defer map.deinit(allocator);
+
+    // Every solid cell, plus a ring around the map. Cells outside the map are solid for the tile map too.
+    const cols: i32 = @intCast(map.cols);
+    const rows: i32 = @intCast(map.rows);
+    const capacity = @as(usize, @intCast(cols + 2)) * @as(usize, @intCast(rows + 2));
+    const walls = try allocator.alloc(physics_queries.Collider, capacity);
+    defer allocator.free(walls);
+    var count: usize = 0;
+    var row: i32 = -1;
+    while (row <= rows) : (row += 1) {
+        var col: i32 = -1;
+        while (col <= cols) : (col += 1) {
+            if (!map.isSolid(col, row)) continue;
+            walls[count] = .{
+                .box = .{
+                    .x = @as(f32, @floatFromInt(col)) * tilemap.tile_px,
+                    .y = @as(f32, @floatFromInt(row)) * tilemap.tile_px,
+                    .w = tilemap.tile_px,
+                    .h = tilemap.tile_px,
+                },
+                .layer = 1,
+            };
+            count += 1;
+        }
+    }
+    const colliders = walls[0..count];
+
+    const cases = [_]struct { box: tilemap.Box, dx: f32, dy: f32 }{
+        .{ .box = .{ .x = 16, .y = 16, .w = 16, .h = 16 }, .dx = 3, .dy = 2 },
+        .{ .box = .{ .x = 48, .y = 16, .w = 16, .h = 16 }, .dx = 100, .dy = 0 },
+        .{ .box = .{ .x = 32, .y = 16, .w = 16, .h = 16 }, .dx = -100, .dy = 0 },
+        .{ .box = .{ .x = 32, .y = 32, .w = 16, .h = 16 }, .dx = 20, .dy = 20 },
+        .{ .box = .{ .x = 16, .y = 48, .w = 16, .h = 16 }, .dx = 0, .dy = 100 },
+        .{ .box = .{ .x = 16, .y = 32, .w = 16, .h = 16 }, .dx = 0, .dy = -100 },
+        .{ .box = .{ .x = 50, .y = 34, .w = 16, .h = 16 }, .dx = -10, .dy = 0 },
+        .{ .box = .{ .x = 50, .y = 34, .w = 16, .h = 16 }, .dx = 10, .dy = 0 },
+        .{ .box = .{ .x = 32, .y = 32, .w = 16, .h = 16 }, .dx = 0.5, .dy = 0 },
+    };
+    for (cases) |c| {
+        const expected = map.moveBox(c.box, c.dx, c.dy);
+        const actual = physics_queries.moveBox(colliders, c.box, c.dx, c.dy, physics_queries.all_layers);
+        try std.testing.expectApproxEqAbs(expected.x, actual.x, 1e-4);
+        try std.testing.expectApproxEqAbs(expected.y, actual.y, 1e-4);
+    }
 }
 
 test "follow centers the view and clamps it inside the world" {

@@ -99,8 +99,10 @@ pub const Game = struct {
         self.ui.deinit();
     }
 
-    /// Runs at the fixed update rate. `ctx.dt` is the length of the step.
-    pub fn update(self: *Game, ctx: *engine.Context) void {
+    /// Runs at the fixed update rate. `ctx.dt` is the length of the step. `nav` asks for a change of
+    /// scene. This game is one scene, so it never asks.
+    pub fn update(self: *Game, ctx: *engine.Context, nav: *engine.SceneNavigator) void {
+        _ = nav;
         self.startAmbient();
         const input = ctx.input;
         if (self.bindings.pressed(input, .quit)) {
